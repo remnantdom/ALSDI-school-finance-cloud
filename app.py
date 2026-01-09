@@ -7,7 +7,10 @@ import base64
 from datetime import datetime
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="SchoolEnroll OS", page_icon="🎓", layout="wide")
+st.set_page_config(
+    page_title="ALSDI MIS", 
+    page_icon="🏫", 
+    layout="wide"
 
 # ==========================================
 #⚙️ CONFIGURATION
@@ -435,3 +438,4 @@ else:
     elif sel == "🎓 Admissions": render_registrar(df_reg, df_sf10, sh_reg, sy)
     elif sel == "💰 Finance": render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy)
     elif sel == "🛡️ User Admin": render_admin(df_users, sh_fin)
+
