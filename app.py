@@ -360,19 +360,35 @@ def render_registrar(df_reg, df_sf10, sh_reg, sy):
             stype = c1.selectbox("Student Type", STUDENT_TYPES)
             prev = c2.text_input("Previous School")
             
-            if st.form_submit_button("💾 Save Student", type="primary"):
-                if stype == "Transferee" and not prev:
-                    st.error("Previous School is required for Transferees.")
-                else:
-                    nid = f"{sy.split('-')[0]}-{len(sy_reg)+1:04d}"
-                    sh_reg.worksheet("Student_Registry").append_row([
-                        nid, lrn, last, first, "", grade, stype, prev, 
-                        "To Follow", "To Follow", "To Follow", "To Request", "FALSE", "Pending", sy
-                    ])
-                    st.toast(f"Student Enrolled: {nid}", icon="✅")
-                    st.cache_data.clear() # Clear cache so update shows immediately
-                    time.sleep(1)
-                    st.rerun()
+           if st.form_submit_button("Process Tuition Payment", type="primary"):
+    allocations = distribute_payment(
+        stu['Grade Level'],
+        amt,
+        df_pay,
+        sid,
+        sy
+    )
+
+    ws = sh_fin.worksheet("Payments_Log")
+
+    for category, value in allocations.items():
+        ws.append_row([
+            CURRENT_DATE,
+            or_n,
+            sid,
+            f"{stu['Last Name']}, {stu['First Name']}",
+            float(value),
+            meth,
+            category,
+            "Payment",
+            sy
+        ])
+
+    st.success("Payment recorded & auto-distributed!")
+    st.cache_data.clear()
+    time.sleep(1)
+    st.rerun()
+
     with t2:
         st.dataframe(sy_reg, use_container_width=True)
 
@@ -602,6 +618,7 @@ else:
     elif sel == "🎓 Admissions": render_registrar(df_reg, df_sf10, sh_reg, sy)
     elif sel == "💰 Finance": render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy)
     elif sel == "🛡️ User Admin": render_admin(df_users, sh_fin)
+
 
 
 
