@@ -24,10 +24,18 @@ SCHOOL_YEARS = ["2025-2026", "2026-2027", "2027-2028"]
 CURRENT_DATE = datetime.now().strftime('%Y-%m-%d')
 
 FEE_STRUCTURE = {
-    "Pre-K": 25250, "Kinder": 26750, "Grade 1": 27480, "Grade 2": 27480,
-    "Grade 3": 27480, "Grade 4": 29680, "Grade 5": 29680, "Grade 6": 31680,
-    "Grade 7": 31680, "Grade 8": 31680, "Grade 9": 31680, "Grade 10": 32680,
-    "Grade 11": 32680, "Grade 12": 32680, "SPED": 0
+   "Pre-K":    {"dp": 9000,  "monthly": 1175, "books": 4500},
+    "Kinder":   {"dp": 10500, "monthly": 1175, "books": 4500},
+    "Grade 1":  {"dp": 9500,  "monthly": 1275, "books": 5230},
+    "Grade 2":  {"dp": 9500,  "monthly": 1275, "books": 5230},
+    "Grade 3":  {"dp": 9500,  "monthly": 1275, "books": 5230},
+    "Grade 4":  {"dp": 9500,  "monthly": 1375, "books": 6430},
+    "Grade 5":  {"dp": 9500,  "monthly": 1375, "books": 6430},
+    "Grade 6":  {"dp": 11500, "monthly": 1375, "books": 6430},
+    "Grade 7":  {"dp": 10000, "monthly": 1475, "books": 6430},
+    "Grade 8":  {"dp": 10000, "monthly": 1475, "books": 6430},
+    "Grade 9":  {"dp": 10000, "monthly": 1475, "books": 6430},
+    "Grade 10": {"dp": 11500, "monthly": 1475, "books": 6430},
 }
 GRADE_LEVELS = list(FEE_STRUCTURE.keys())
 STUDENT_TYPES = ["New Student", "Old / Continuing", "Transferee", "Returnee"]
@@ -205,6 +213,43 @@ def load_data():
     return df_reg, df_sf10, df_pay, df_users, sh_reg, sh_fin
 
 # --- LOGIC HELPERS ---
+def distribute_payment(grade, amount, df_pay, sid, sy):
+    """
+    Auto-distribute ONE payment into DP, Books, Monthly.
+    Returns a dict with category allocations.
+    """
+
+    fees = FEE_BREAKDOWN.get(grade)
+    if not fees:
+        return {"Tuition": amount}
+
+    # Compute already-paid per category
+    paid_dp = df_pay[(df_pay['Student_ID'] == sid) & (df_pay['Notes'] == 'DP') & (df_pay['School_Year'] == sy)]['Amount'].sum()
+    paid_books = df_pay[(df_pay['Student_ID'] == sid) & (df_pay['Notes'] == 'Books') & (df_pay['School_Year'] == sy)]['Amount'].sum()
+
+    remaining = amount
+    allocation = {}
+
+    # 1️⃣ DP
+    dp_due = fees['dp'] - paid_dp
+    if dp_due > 0 and remaining > 0:
+        take = min(dp_due, remaining)
+        allocation["DP"] = take
+        remaining -= take
+
+    # 2️⃣ Books
+    books_due = fees['books'] - paid_books
+    if books_due > 0 and remaining > 0:
+        take = min(books_due, remaining)
+        allocation["Books"] = take
+        remaining -= take
+
+    # 3️⃣ Monthly Tuition
+    if remaining > 0:
+        allocation["Monthly Tuition"] = remaining
+
+    return allocation
+
 def get_financials(sid, grade, df_pay, sy):
     total_fee = FEE_STRUCTURE.get(grade, 0)
     paid = 0
@@ -400,9 +445,26 @@ def render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy):
                     or_n = st.text_input("OR Number")
                     meth = st.selectbox("Method", PAYMENT_METHODS)
                     if st.form_submit_button("Process Tuition Payment", type="primary"):
-                        sh_fin.worksheet("Payments_Log").append_row([
-                            CURRENT_DATE, or_n, sid, f"{stu['Last Name']}, {stu['First Name']}", 
-                            amt, meth, "Tuition Payment", "Payment", sy
+    allocations = distribute_payment(stu['Grade Level'], amt, df_pay, sid, sy)
+
+    for note, value in allocations.items():
+        sh_fin.worksheet("Payments_Log").append_row([
+            CURRENT_DATE,
+            or_n,
+            sid,
+            f"{stu['Last Name']}, {stu['First Name']}",
+            value,
+            meth,
+            note,          # 👈 CATEGORY PRESERVED
+            "Payment",
+            sy
+        ])
+
+    st.success("Payment recorded & auto-distributed!")
+    st.cache_data.clear()
+    time.sleep(1)
+    st.rerun()
+
                         ])
                         st.success("Recorded!")
                         st.cache_data.clear()
@@ -540,5 +602,6 @@ else:
     elif sel == "🎓 Admissions": render_registrar(df_reg, df_sf10, sh_reg, sy)
     elif sel == "💰 Finance": render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy)
     elif sel == "🛡️ User Admin": render_admin(df_users, sh_fin)
+
 
 
