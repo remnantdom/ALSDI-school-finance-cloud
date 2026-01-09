@@ -37,8 +37,6 @@ PAYMENT_METHODS = ["Cash", "GCash", "Bank Transfer", "Check"]
 st.markdown("""
 <style>
     .stApp { background-color: #f8f9fa; }
-    
-    /* Metrics Cards */
     div[data-testid="stMetric"] {
         background-color: #ffffff;
         border: 1px solid #e0e0e0;
@@ -46,14 +44,10 @@ st.markdown("""
         border-radius: 8px;
         box-shadow: 0 2px 5px rgba(0,0,0,0.05);
     }
-    
-    /* Sidebar Styling */
     section[data-testid="stSidebar"] {
         background-color: #ffffff;
         border-right: 1px solid #eaeaea;
     }
-    
-    /* School Name Styling in Sidebar */
     .sidebar-school-name {
         font-size: 14px;
         font-weight: bold;
@@ -72,118 +66,131 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🔌 DATABASE CONNECTION
+# 🔌 DATABASE CONNECTION & CACHING
 # ==========================================
+
+# 1. CACHE THE CONNECTION (Indefinite)
 @st.cache_resource
 def get_connection():
     return gspread.service_account_from_dict(st.secrets["gcp_service_account"])
 
-def load_data():
+# 2. CACHE THE SPREADSHEET OBJECTS (Indefinite - minimizes "Open" calls)
+@st.cache_resource
+def get_spreadsheets():
     gc = get_connection()
-    
-    # --- HELPER: SMARTER SAFE LOADER ---
-    def safe_read(ws, expected_cols=None):
-        try:
-            data = ws.get_all_values()
-            if not data:
-                return pd.DataFrame(columns=expected_cols if expected_cols else [])
-            
-            # 1. Extract and Clean Headers
-            raw_headers = data.pop(0) 
-            headers = [h.strip() for h in raw_headers]
-            
-            # 2. Create DataFrame
-            df = pd.DataFrame(data, columns=headers)
-            
-            # 3. Remove columns with empty headers
-            df = df.loc[:, [c for c in df.columns if c]]
-            
-            # 4. Ensure Expected Columns Exist
-            if expected_cols:
-                for col in expected_cols:
-                    if col not in df.columns:
-                        match = next((h for h in df.columns if h.lower() == col.lower()), None)
-                        if match:
-                            df.rename(columns={match: col}, inplace=True)
-                        else:
-                            df[col] = "" 
-            return df
-        except Exception as e:
-            return pd.DataFrame(columns=expected_cols if expected_cols else [])
-
-    # 1. LOAD REGISTRAR DB
     try:
         sh_reg = gc.open(REGISTRAR_SHEET_NAME)
-        
-        # A. Student Registry
-        try:
-            ws_reg = sh_reg.worksheet("Student_Registry")
-        except gspread.WorksheetNotFound:
-            st.error("❌ Critical: 'Student_Registry' tab is missing.")
-            st.stop()
-            
-        cols_reg = ["Student_ID", "LRN", "Last Name", "First Name", "Middle Name", "Grade Level", "Student Type", "Previous School", "PSA Birth Cert", "Report Card / ECCD", "Good Moral", "SF10 Status", "Data Privacy Consent", "Current Status", "School_Year"]
-        df_reg = safe_read(ws_reg, cols_reg)
-        
-        if not df_reg.empty:
-            df_reg['Student_ID'] = df_reg['Student_ID'].astype(str)
-            if 'School_Year' in df_reg.columns:
-                df_reg['School_Year'] = df_reg['School_Year'].replace("", "2025-2026")
-            else:
-                df_reg['School_Year'] = "2025-2026"
-
-        # B. SF10 Requests
-        try:
-            ws_sf10 = sh_reg.worksheet("SF10_Requests")
-        except gspread.WorksheetNotFound:
-            ws_sf10 = sh_reg.add_worksheet("SF10_Requests", 1000, 4)
-            ws_sf10.append_row(["Timestamp", "Student_Name", "Student_ID", "Status"])
-        
-        df_sf10 = safe_read(ws_sf10, ["Timestamp", "Student_Name", "Student_ID", "Status"])
-
+        sh_fin = gc.open(FINANCE_SHEET_NAME)
+        return sh_reg, sh_fin
     except Exception as e:
-        st.error(f"❌ Error loading Registrar DB: {e}")
+        return None, None
+
+# 3. CACHE THE DATA READS (TTL = 3 seconds to prevent Quota Limits)
+@st.cache_data(ttl=3)
+def fetch_sheet_data(_ws):
+    # The underscore _ws tells Streamlit not to hash this object
+    try:
+        data = _ws.get_all_values()
+        return data
+    except:
+        return []
+
+# --- MAIN LOADER ---
+def load_data():
+    sh_reg, sh_fin = get_spreadsheets()
+    
+    if not sh_reg or not sh_fin:
+        st.error("❌ Critical: Could not connect to Google Sheets. Check permissions.")
         st.stop()
 
-    # 2. LOAD FINANCE DB
-    try:
-        sh_fin = gc.open(FINANCE_SHEET_NAME)
+    # --- HELPER: SAFE DF BUILDER ---
+    def safe_read(ws, expected_cols=None):
+        data = fetch_sheet_data(ws) # USES CACHE
         
-        # A. Payments Log
-        try:
-            ws_pay = sh_fin.worksheet("Payments_Log")
-        except gspread.WorksheetNotFound:
-            ws_pay = sh_fin.add_worksheet("Payments_Log", 1000, 9)
-            ws_pay.append_row(["Date", "OR_Number", "Student_ID", "Student_Name", "Amount", "Method", "Notes", "Type", "School_Year"])
+        if not data:
+            return pd.DataFrame(columns=expected_cols if expected_cols else [])
         
-        cols_pay = ["Date", "OR_Number", "Student_ID", "Student_Name", "Amount", "Method", "Notes", "Type", "School_Year"]
-        df_pay = safe_read(ws_pay, cols_pay)
+        # Header Clean & Build
+        raw_headers = data.pop(0) 
+        headers = [h.strip() for h in raw_headers]
+        df = pd.DataFrame(data, columns=headers)
         
-        if not df_pay.empty:
-            df_pay['Student_ID'] = df_pay['Student_ID'].astype(str)
-            df_pay['Amount'] = pd.to_numeric(df_pay['Amount'], errors='coerce').fillna(0)
-            if 'School_Year' in df_pay.columns:
-                df_pay['School_Year'] = df_pay['School_Year'].replace("", "2025-2026")
+        # Clean empty columns
+        df = df.loc[:, [c for c in df.columns if c]]
+        
+        # Ensure Schema
+        if expected_cols:
+            for col in expected_cols:
+                if col not in df.columns:
+                    match = next((h for h in df.columns if h.lower() == col.lower()), None)
+                    if match:
+                        df.rename(columns={match: col}, inplace=True)
+                    else:
+                        df[col] = "" 
+        return df
 
-        # B. User Accounts
-        try:
-            ws_users = sh_fin.worksheet("User_Accounts")
-        except gspread.WorksheetNotFound:
-            ws_users = sh_fin.add_worksheet("User_Accounts", 100, 3)
-            ws_users.append_row(["Username", "Password", "Role"])
+    # --- REGISTRAR DATA ---
+    try:
+        ws_reg = sh_reg.worksheet("Student_Registry")
+    except:
+        st.error("❌ 'Student_Registry' tab missing."); st.stop()
         
-        all_users = ws_users.get_all_values()
-        if len(all_users) <= 1: 
-             seeds = [["alsdiregistrar", "alsdi2006", "Registrar"], ["alsdifinance", "alsdi2006", "Finance"], ["alsdiadmin", "alsdi2006", "Admin"]]
-             for s in seeds: ws_users.append_row(s)
-             all_users = ws_users.get_all_values()
-        
+    cols_reg = ["Student_ID", "LRN", "Last Name", "First Name", "Middle Name", "Grade Level", "Student Type", "Previous School", "PSA Birth Cert", "Report Card / ECCD", "Good Moral", "SF10 Status", "Data Privacy Consent", "Current Status", "School_Year"]
+    df_reg = safe_read(ws_reg, cols_reg)
+    if not df_reg.empty:
+        df_reg['Student_ID'] = df_reg['Student_ID'].astype(str)
+        if 'School_Year' in df_reg.columns: 
+            df_reg['School_Year'] = df_reg['School_Year'].replace("", "2025-2026")
+        else:
+            df_reg['School_Year'] = "2025-2026"
+
+    # --- SF10 DATA ---
+    try:
+        ws_sf10 = sh_reg.worksheet("SF10_Requests")
+    except:
+        ws_sf10 = sh_reg.add_worksheet("SF10_Requests", 1000, 4)
+        ws_sf10.append_row(["Timestamp", "Student_Name", "Student_ID", "Status"])
+        st.cache_data.clear() # Clear cache if we created new tab
+    
+    df_sf10 = safe_read(ws_sf10, ["Timestamp", "Student_Name", "Student_ID", "Status"])
+
+    # --- FINANCE DATA ---
+    try:
+        ws_pay = sh_fin.worksheet("Payments_Log")
+    except:
+        ws_pay = sh_fin.add_worksheet("Payments_Log", 1000, 9)
+        ws_pay.append_row(["Date", "OR_Number", "Student_ID", "Student_Name", "Amount", "Method", "Notes", "Type", "School_Year"])
+        st.cache_data.clear()
+
+    cols_pay = ["Date", "OR_Number", "Student_ID", "Student_Name", "Amount", "Method", "Notes", "Type", "School_Year"]
+    df_pay = safe_read(ws_pay, cols_pay)
+    if not df_pay.empty:
+        df_pay['Student_ID'] = df_pay['Student_ID'].astype(str)
+        df_pay['Amount'] = pd.to_numeric(df_pay['Amount'], errors='coerce').fillna(0)
+        if 'School_Year' in df_pay.columns:
+            df_pay['School_Year'] = df_pay['School_Year'].replace("", "2025-2026")
+
+    # --- USERS ---
+    try:
+        ws_users = sh_fin.worksheet("User_Accounts")
+    except:
+        ws_users = sh_fin.add_worksheet("User_Accounts", 100, 3)
+        ws_users.append_row(["Username", "Password", "Role"])
+        st.cache_data.clear()
+
+    # Manual Seed Check (Raw read to avoid cache blocking seed)
+    if len(fetch_sheet_data(ws_users)) <= 1:
+         seeds = [["alsdiregistrar", "alsdi2006", "Registrar"], ["alsdifinance", "alsdi2006", "Finance"], ["alsdiadmin", "alsdi2006", "Admin"]]
+         for s in seeds: ws_users.append_row(s)
+         st.cache_data.clear()
+    
+    # Reload Users
+    all_users = fetch_sheet_data(ws_users)
+    if all_users:
         headers = all_users.pop(0)
         df_users = pd.DataFrame(all_users, columns=headers)
-
-    except Exception as e:
-        st.error(f"❌ Error loading Finance DB: {e}")
-        st.stop()
+    else:
+        df_users = pd.DataFrame()
 
     return df_reg, df_sf10, df_pay, df_users, sh_reg, sh_fin
 
@@ -308,6 +315,7 @@ def render_registrar(df_reg, df_sf10, sh_reg, sy):
                         "To Follow", "To Follow", "To Follow", "To Request", "FALSE", "Pending", sy
                     ])
                     st.toast(f"Student Enrolled: {nid}", icon="✅")
+                    st.cache_data.clear() # Clear cache so update shows immediately
                     time.sleep(1)
                     st.rerun()
     with t2:
@@ -344,6 +352,7 @@ def render_registrar(df_reg, df_sf10, sh_reg, sy):
                         ts, name_to_log, id_to_log, "Pending Payment"
                     ])
                     st.success(f"Request Logged for {name_to_log}!")
+                    st.cache_data.clear()
                     time.sleep(1)
                     st.rerun()
                 else:
@@ -386,6 +395,7 @@ def render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy):
                             amt, meth, "Tuition Payment", "Payment", sy
                         ])
                         st.success("Recorded!")
+                        st.cache_data.clear()
                         time.sleep(1)
                         st.rerun()
                 
@@ -419,6 +429,7 @@ def render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy):
                                 datetime.now().strftime("%Y-%m-%d"), row['Student_Name'], str(row['Student_ID']), "PAID / RELEASED"
                             ])
                             st.success("Payment Taken & Status Updated!")
+                            st.cache_data.clear()
                             time.sleep(1)
                             st.rerun()
         else:
@@ -441,7 +452,9 @@ def render_admin(df_users, sh_fin):
             if u in df_users['Username'].values: st.error("Exists")
             else:
                 sh_fin.worksheet("User_Accounts").append_row([u, p, r])
-                st.success("Created"); time.sleep(1); st.rerun()
+                st.success("Created")
+                st.cache_data.clear()
+                time.sleep(1); st.rerun()
 
 # ==========================================
 # 🚀 MAIN APP EXECUTION
