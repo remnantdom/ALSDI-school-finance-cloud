@@ -17,7 +17,7 @@ st.set_page_config(
 # ⚙️ CONFIGURATION
 # ==========================================
 REGISTRAR_SHEET_NAME = "Registrar 2025-2026" 
-FINANCE_SHEET_NAME = "Registrar 2025-2026"
+FINANCE_SHEET_NAME = "Finance 2025-2026"
 
 # SYSTEM SETTINGS
 SCHOOL_YEARS = ["2025-2026", "2026-2027", "2027-2028"]
@@ -471,3 +471,4 @@ else:
     elif sel == "🎓 Admissions": render_registrar(df_reg, df_sf10, sh_reg, sy)
     elif sel == "💰 Finance": render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy)
     elif sel == "🛡️ User Admin": render_admin(df_users, sh_fin)
+
