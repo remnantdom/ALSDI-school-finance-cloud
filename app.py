@@ -228,7 +228,7 @@ def generate_soa(student, total, paid, balance, history_df, sy):
     # 2. Title Line
     pdf.set_font("Arial", 'I', 11)
     pdf.cell(0, 10, f"STATEMENT OF ACCOUNT (S.Y. {sy})", 0, 1, 'C')
-    pdf.line(10, 35, 200, 35)
+    pdf.line(10, 42, 200, 30) # Changed 35 to 30 to move the line UP
     pdf.ln(10)
 
     # 3. Student Details (Left) & Grade (Right)
@@ -540,4 +540,5 @@ else:
     elif sel == "🎓 Admissions": render_registrar(df_reg, df_sf10, sh_reg, sy)
     elif sel == "💰 Finance": render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy)
     elif sel == "🛡️ User Admin": render_admin(df_users, sh_fin)
+
 
