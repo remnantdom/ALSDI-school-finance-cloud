@@ -457,29 +457,39 @@ def render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy):
                 st.metric("Tuition Balance", f"₱{bal:,.2f}")
                 
                 with st.form("pay_tuition"):
-                    amt = st.number_input("Amount (₱)", min_value=1.0)
-                    or_n = st.text_input("OR Number")
-                    meth = st.selectbox("Method", PAYMENT_METHODS)
-                    if st.form_submit_button("Process Tuition Payment", type="primary"):
-    allocations = distribute_payment(stu['Grade Level'], amt, df_pay, sid, sy)
+    amt = st.number_input("Amount (₱)", min_value=1.0)
+    or_n = st.text_input("OR Number")
+    meth = st.selectbox("Method", PAYMENT_METHODS)
 
-    for note, value in allocations.items():
-        sh_fin.worksheet("Payments_Log").append_row([
-            CURRENT_DATE,
-            or_n,
+    if st.form_submit_button("Process Tuition Payment", type="primary"):
+        allocations = distribute_payment(
+            stu['Grade Level'],
+            amt,
+            df_pay,
             sid,
-            f"{stu['Last Name']}, {stu['First Name']}",
-            value,
-            meth,
-            note,          # 👈 CATEGORY PRESERVED
-            "Payment",
             sy
-        ])
+        )
 
-    st.success("Payment recorded & auto-distributed!")
-    st.cache_data.clear()
-    time.sleep(1)
-    st.rerun()
+        ws = sh_fin.worksheet("Payments_Log")
+
+        for category, value in allocations.items():
+            ws.append_row([
+                CURRENT_DATE,
+                or_n,
+                sid,
+                f"{stu['Last Name']}, {stu['First Name']}",
+                float(value),
+                meth,
+                category,
+                "Payment",
+                sy
+            ])
+
+        st.success("Payment recorded & auto-distributed!")
+        st.cache_data.clear()
+        time.sleep(1)
+        st.rerun()
+
 
                         ])
                         st.success("Recorded!")
@@ -618,6 +628,7 @@ else:
     elif sel == "🎓 Admissions": render_registrar(df_reg, df_sf10, sh_reg, sy)
     elif sel == "💰 Finance": render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy)
     elif sel == "🛡️ User Admin": render_admin(df_users, sh_fin)
+
 
 
 
