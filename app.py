@@ -173,7 +173,6 @@ def load_data():
         st.stop()
 
     return df_reg, df_sf10, df_pay, df_users, sh_reg, sh_fin
-
 # --- LOGIC HELPERS ---
 def get_financials(sid, grade, df_pay, sy):
     total_fee = FEE_STRUCTURE.get(grade, 0)
@@ -499,6 +498,7 @@ else:
     elif sel == "🎓 Admissions": render_registrar(df_reg, df_sf10, sh_reg, sy)
     elif sel == "💰 Finance": render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy)
     elif sel == "🛡️ User Admin": render_admin(df_users, sh_fin)
+
 
 
 
