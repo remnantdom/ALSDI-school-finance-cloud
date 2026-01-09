@@ -11,12 +11,13 @@ st.set_page_config(
     page_title="ALSDI MIS", 
     page_icon="🏫", 
     layout="wide"
+)
 
 # ==========================================
-#⚙️ CONFIGURATION
+# ⚙️ CONFIGURATION
 # ==========================================
 REGISTRAR_SHEET_NAME = "Registrar 2025-2026" 
-FINANCE_SHEET_NAME = "Finance 2025-2026"
+FINANCE_SHEET_NAME = "Registrar 2025-2026"
 
 # SYSTEM SETTINGS
 SCHOOL_YEARS = ["2025-2026", "2026-2027", "2027-2028"]
@@ -36,6 +37,8 @@ PAYMENT_METHODS = ["Cash", "GCash", "Bank Transfer", "Check"]
 st.markdown("""
 <style>
     .stApp { background-color: #f8f9fa; }
+    
+    /* Metrics Cards */
     div[data-testid="stMetric"] {
         background-color: #ffffff;
         border: 1px solid #e0e0e0;
@@ -43,9 +46,27 @@ st.markdown("""
         border-radius: 8px;
         box-shadow: 0 2px 5px rgba(0,0,0,0.05);
     }
+    
+    /* Sidebar Styling */
     section[data-testid="stSidebar"] {
         background-color: #ffffff;
         border-right: 1px solid #eaeaea;
+    }
+    
+    /* School Name Styling in Sidebar */
+    .sidebar-school-name {
+        font-size: 14px;
+        font-weight: bold;
+        color: #1e3a8a;
+        text-transform: uppercase;
+        margin-bottom: 0px;
+        line-height: 1.2;
+    }
+    .sidebar-system-name {
+        font-size: 12px;
+        color: #64748b;
+        margin-top: 5px;
+        font-style: italic;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -71,11 +92,10 @@ def load_data():
             df_reg['Student_ID'] = df_reg['Student_ID'].astype(str)
             if 'School_Year' not in df_reg.columns: df_reg['School_Year'] = "2025-2026"
 
-        # B. SF10 Requests (Auto-Create)
+        # B. SF10 Requests
         try:
             ws_sf10 = sh_reg.worksheet("SF10_Requests")
             df_sf10 = pd.DataFrame(ws_sf10.get_all_records())
-            # Ensure columns exist
             if df_sf10.empty:
                 df_sf10 = pd.DataFrame(columns=["Timestamp", "Student_Name", "Student_ID", "Status"])
         except:
@@ -139,11 +159,15 @@ def get_financials(sid, grade, df_pay, sy):
 def generate_soa(student, total, paid, balance, history_df, sy):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
+    pdf.set_font("Arial", 'B', 14) # Slightly smaller to fit long name
     pdf.cell(0, 10, "ABUNDANT LIFE SCHOOL OF DISCOVERY, INC.", 0, 1, 'C')
+    pdf.set_font("Arial", '', 10)
+    pdf.cell(0, 5, "Management Information System", 0, 1, 'C')
+    pdf.ln(5)
+    
     pdf.set_font("Arial", 'I', 11)
     pdf.cell(0, 10, f"STATEMENT OF ACCOUNT (S.Y. {sy})", 0, 1, 'C')
-    pdf.line(10, 30, 200, 30)
+    pdf.line(10, 35, 200, 35)
     pdf.ln(10)
 
     pdf.set_font("Arial", 'B', 10)
@@ -338,15 +362,10 @@ def render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy):
                         doc_fee = c_a.number_input("SF10 Fee", value=150.0)
                         or_doc = c_b.text_input("OR Number", key=f"or_{i}")
                         if st.form_submit_button("Process Payment & Release"):
-                            # Log Payment
                             sh_fin.worksheet("Payments_Log").append_row([
                                 CURRENT_DATE, or_doc, str(row['Student_ID']), row['Student_Name'], 
                                 doc_fee, "Cash", "SF10 Request Fee", "Document Fee", sy
                             ])
-                            # Update SF10 Log to 'Paid'
-                            # Since we can't easily edit rows without Row IDs in GSpread simple mode,
-                            # we append a new "Update" row to the SF10 sheet to signify completion.
-                            # In a real DB, you'd update line item. Here, we add a "Released" entry.
                             sh_reg.worksheet("SF10_Requests").append_row([
                                 datetime.now().strftime("%Y-%m-%d"), row['Student_Name'], str(row['Student_ID']), "PAID / RELEASED"
                             ])
@@ -394,7 +413,14 @@ except Exception as e:
 if not st.session_state.logged_in:
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
-        st.markdown("<br><h2 style='text-align:center;'>🔐 SchoolEnroll OS</h2>", unsafe_allow_html=True)
+        # BRANDED LOGIN HEADER
+        st.markdown("""
+            <div style='text-align: center; margin-bottom: 30px;'>
+                <h2 style='color: #1e3a8a; margin-bottom: 5px;'>ABUNDANT LIFE SCHOOL OF DISCOVERY, INC.</h2>
+                <h5 style='color: #64748b;'>Management Information System</h5>
+            </div>
+        """, unsafe_allow_html=True)
+        
         with st.form("login"):
             user = st.text_input("Username")
             pwd = st.text_input("Password", type="password")
@@ -419,8 +445,15 @@ else:
     sy = st.session_state.sy
     
     with st.sidebar:
-        st.title("SchoolEnroll")
-        st.caption(f"Role: {role}")
+        # BRANDED SIDEBAR
+        st.markdown("""
+            <div style='text-align: center; padding-bottom: 20px;'>
+                <div class='sidebar-school-name'>ABUNDANT LIFE SCHOOL<br>OF DISCOVERY, INC.</div>
+                <div class='sidebar-system-name'>Management Information System</div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        st.caption(f"User: {role}")
         new_sy = st.selectbox("SY", SCHOOL_YEARS, index=SCHOOL_YEARS.index(sy))
         if new_sy != sy: st.session_state.sy = new_sy; st.rerun()
         st.divider()
@@ -438,4 +471,3 @@ else:
     elif sel == "🎓 Admissions": render_registrar(df_reg, df_sf10, sh_reg, sy)
     elif sel == "💰 Finance": render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy)
     elif sel == "🛡️ User Admin": render_admin(df_users, sh_fin)
-
