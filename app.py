@@ -88,7 +88,10 @@ def load_data():
         # A. Student Registry
         ws_reg = sh_reg.worksheet("Student_Registry")
         df_reg = pd.DataFrame(ws_reg.get_all_records())
-        if not df_reg.empty:
+        # FORCE COLUMNS if empty
+        if df_reg.empty:
+            df_reg = pd.DataFrame(columns=["Student_ID", "LRN", "Last Name", "First Name", "Middle Name", "Grade Level", "Student Type", "Previous School", "PSA Birth Cert", "Report Card / ECCD", "Good Moral", "SF10 Status", "Data Privacy Consent", "Current Status", "School_Year"])
+        else:
             df_reg['Student_ID'] = df_reg['Student_ID'].astype(str)
             if 'School_Year' not in df_reg.columns: df_reg['School_Year'] = "2025-2026"
 
@@ -115,7 +118,12 @@ def load_data():
         try:
             ws_pay = sh_fin.worksheet("Payments_Log")
             df_pay = pd.DataFrame(ws_pay.get_all_records())
-            if not df_pay.empty:
+            
+            # --- THE FIX: Force Columns if Empty ---
+            expected_cols = ["Date", "OR_Number", "Student_ID", "Student_Name", "Amount", "Method", "Notes", "Type", "School_Year"]
+            if df_pay.empty or 'Student_ID' not in df_pay.columns:
+                df_pay = pd.DataFrame(columns=expected_cols)
+            else:
                 df_pay['Student_ID'] = df_pay['Student_ID'].astype(str)
                 df_pay['Amount'] = pd.to_numeric(df_pay['Amount'])
                 if 'School_Year' not in df_pay.columns: df_pay['School_Year'] = "2025-2026"
@@ -471,4 +479,5 @@ else:
     elif sel == "🎓 Admissions": render_registrar(df_reg, df_sf10, sh_reg, sy)
     elif sel == "💰 Finance": render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy)
     elif sel == "🛡️ User Admin": render_admin(df_users, sh_fin)
+
 
