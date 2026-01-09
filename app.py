@@ -57,28 +57,68 @@ def get_connection():
 def load_data():
     gc = get_connection()
     
+    # --- HELPER: SMARTER SAFE LOADER ---
+    def safe_read(ws, expected_cols=None):
+        try:
+            data = ws.get_all_values()
+            if not data:
+                return pd.DataFrame(columns=expected_cols if expected_cols else [])
+            
+            # 1. Extract and Clean Headers
+            raw_headers = data.pop(0) 
+            headers = [h.strip() for h in raw_headers] # Remove extra spaces
+            
+            # 2. Create DataFrame
+            df = pd.DataFrame(data, columns=headers)
+            
+            # 3. Remove columns with empty headers (Fixes "Duplicate" error)
+            df = df.loc[:, [c for c in df.columns if c]]
+            
+            # 4. Ensure Expected Columns Exist
+            if expected_cols:
+                for col in expected_cols:
+                    if col not in df.columns:
+                        # Fallback: Check for case-insensitive match
+                        match = next((h for h in df.columns if h.lower() == col.lower()), None)
+                        if match:
+                            df.rename(columns={match: col}, inplace=True)
+                        else:
+                            df[col] = "" # Create empty if truly missing
+            return df
+        except Exception as e:
+            return pd.DataFrame(columns=expected_cols if expected_cols else [])
+
     # 1. LOAD REGISTRAR DB
     try:
         sh_reg = gc.open(REGISTRAR_SHEET_NAME)
         
         # A. Student Registry
-        ws_reg = sh_reg.worksheet("Student_Registry")
-        df_reg = pd.DataFrame(ws_reg.get_all_records())
+        try:
+            ws_reg = sh_reg.worksheet("Student_Registry")
+        except gspread.WorksheetNotFound:
+            st.error("❌ Critical: 'Student_Registry' tab is missing in Registrar DB.")
+            st.stop()
+            
+        cols_reg = ["Student_ID", "LRN", "Last Name", "First Name", "Middle Name", "Grade Level", "Student Type", "Previous School", "PSA Birth Cert", "Report Card / ECCD", "Good Moral", "SF10 Status", "Data Privacy Consent", "Current Status", "School_Year"]
+        df_reg = safe_read(ws_reg, cols_reg)
+        
         if not df_reg.empty:
             df_reg['Student_ID'] = df_reg['Student_ID'].astype(str)
-            if 'School_Year' not in df_reg.columns: df_reg['School_Year'] = "2025-2026"
+            # Default SY if missing
+            if 'School_Year' in df_reg.columns:
+                df_reg['School_Year'] = df_reg['School_Year'].replace("", "2025-2026")
+            else:
+                df_reg['School_Year'] = "2025-2026"
 
-        # B. SF10 Requests (Auto-Create)
+        # B. SF10 Requests
         try:
             ws_sf10 = sh_reg.worksheet("SF10_Requests")
-            df_sf10 = pd.DataFrame(ws_sf10.get_all_records())
-            # Ensure columns exist
-            if df_sf10.empty:
-                df_sf10 = pd.DataFrame(columns=["Timestamp", "Student_Name", "Student_ID", "Status"])
-        except:
+        except gspread.WorksheetNotFound:
+            # Only create if it TRULY doesn't exist
             ws_sf10 = sh_reg.add_worksheet("SF10_Requests", 1000, 4)
             ws_sf10.append_row(["Timestamp", "Student_Name", "Student_ID", "Status"])
-            df_sf10 = pd.DataFrame(columns=["Timestamp", "Student_Name", "Student_ID", "Status"])
+        
+        df_sf10 = safe_read(ws_sf10, ["Timestamp", "Student_Name", "Student_ID", "Status"])
 
     except Exception as e:
         st.error(f"❌ Error loading Registrar DB: {e}")
@@ -91,31 +131,37 @@ def load_data():
         # A. Payments Log
         try:
             ws_pay = sh_fin.worksheet("Payments_Log")
-            df_pay = pd.DataFrame(ws_pay.get_all_records())
-            if not df_pay.empty:
-                df_pay['Student_ID'] = df_pay['Student_ID'].astype(str)
-                df_pay['Amount'] = pd.to_numeric(df_pay['Amount'])
-                if 'School_Year' not in df_pay.columns: df_pay['School_Year'] = "2025-2026"
-        except:
+        except gspread.WorksheetNotFound:
+            # Only create if it TRULY doesn't exist
             ws_pay = sh_fin.add_worksheet("Payments_Log", 1000, 9)
             ws_pay.append_row(["Date", "OR_Number", "Student_ID", "Student_Name", "Amount", "Method", "Notes", "Type", "School_Year"])
-            df_pay = pd.DataFrame(columns=["Date", "OR_Number", "Student_ID", "Student_Name", "Amount", "Method", "Notes", "Type", "School_Year"])
+        
+        cols_pay = ["Date", "OR_Number", "Student_ID", "Student_Name", "Amount", "Method", "Notes", "Type", "School_Year"]
+        df_pay = safe_read(ws_pay, cols_pay)
+        
+        if not df_pay.empty:
+            df_pay['Student_ID'] = df_pay['Student_ID'].astype(str)
+            df_pay['Amount'] = pd.to_numeric(df_pay['Amount'], errors='coerce').fillna(0)
+            if 'School_Year' in df_pay.columns:
+                df_pay['School_Year'] = df_pay['School_Year'].replace("", "2025-2026")
 
         # B. User Accounts
         try:
             ws_users = sh_fin.worksheet("User_Accounts")
-            existing_data = ws_users.get_all_records()
-            if not existing_data:
-                seeds = [["alsdiregistrar", "alsdi2006", "Registrar"], ["alsdifinance", "alsdi2006", "Finance"], ["alsdiadmin", "alsdi2006", "Admin"]]
-                for s in seeds: ws_users.append_row(s)
-                existing_data = ws_users.get_all_records()
-            df_users = pd.DataFrame(existing_data)
-        except:
+        except gspread.WorksheetNotFound:
             ws_users = sh_fin.add_worksheet("User_Accounts", 100, 3)
             ws_users.append_row(["Username", "Password", "Role"])
-            seeds = [["alsdiregistrar", "alsdi2006", "Registrar"], ["alsdifinance", "alsdi2006", "Finance"], ["alsdiadmin", "alsdi2006", "Admin"]]
-            for s in seeds: ws_users.append_row(s)
-            df_users = pd.DataFrame([{"Username": s[0], "Password": s[1], "Role": s[2]} for s in seeds])
+        
+        # Check users safely
+        all_users = ws_users.get_all_values()
+        if len(all_users) <= 1: 
+             seeds = [["alsdiregistrar", "alsdi2006", "Registrar"], ["alsdifinance", "alsdi2006", "Finance"], ["alsdiadmin", "alsdi2006", "Admin"]]
+             for s in seeds: ws_users.append_row(s)
+             all_users = ws_users.get_all_values()
+        
+        # Process Users DF
+        headers = all_users.pop(0)
+        df_users = pd.DataFrame(all_users, columns=headers)
 
     except Exception as e:
         st.error(f"❌ Error loading Finance DB: {e}")
@@ -435,3 +481,4 @@ else:
     elif sel == "🎓 Admissions": render_registrar(df_reg, df_sf10, sh_reg, sy)
     elif sel == "💰 Finance": render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy)
     elif sel == "🛡️ User Admin": render_admin(df_users, sh_fin)
+
