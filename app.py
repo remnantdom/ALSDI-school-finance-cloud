@@ -66,43 +66,53 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🔌 DATABASE CONNECTION & CACHING
+# 🔌 DATABASE CONNECTION & CACHING (DEBUG MODE)
 # ==========================================
 
-# 1. CACHE THE CONNECTION (Indefinite)
+# 1. CACHE THE CONNECTION
 @st.cache_resource
 def get_connection():
-    return gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+    # This prints if the JSON Key itself is wrong
+    try:
+        return gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+    except Exception as e:
+        st.error(f"❌ Secret Key Error: {e}")
+        st.stop()
 
-# 2. CACHE THE SPREADSHEET OBJECTS (Indefinite - minimizes "Open" calls)
+# 2. CACHE THE SPREADSHEETS
 @st.cache_resource
 def get_spreadsheets():
     gc = get_connection()
     try:
         sh_reg = gc.open(REGISTRAR_SHEET_NAME)
         sh_fin = gc.open(FINANCE_SHEET_NAME)
-        return sh_reg, sh_fin
+        return sh_reg, sh_fin, None
     except Exception as e:
-        return None, None
+        # RETURN THE ACTUAL ERROR MESSAGE
+        return None, None, e
 
-# 3. CACHE THE DATA READS (TTL = 3 seconds to prevent Quota Limits)
-@st.cache_data(ttl=3)
+# 3. CACHE DATA READS
+@st.cache_data(ttl=5) # Increased TTL to 5s to be safer
 def fetch_sheet_data(_ws):
-    # The underscore _ws tells Streamlit not to hash this object
     try:
-        data = _ws.get_all_values()
-        return data
+        return _ws.get_all_values()
     except:
         return []
 
 # --- MAIN LOADER ---
 def load_data():
-    sh_reg, sh_fin = get_spreadsheets()
+    sh_reg, sh_fin, error_msg = get_spreadsheets()
+    
+    # IF CONNECTION FAILED, SHOW EXACT GOOGLE ERROR
+    if error_msg:
+        st.error(f"❌ Google Connection Failed: {error_msg}")
+        st.stop()
     
     if not sh_reg or not sh_fin:
-        st.error("❌ Critical: Could not connect to Google Sheets. Check permissions.")
+        st.error("❌ Critical: Unknown connection error.")
         st.stop()
-
+    
+    # ... rest of the function continues below ...
     # --- HELPER: SAFE DF BUILDER ---
     def safe_read(ws, expected_cols=None):
         data = fetch_sheet_data(ws) # USES CACHE
@@ -530,3 +540,4 @@ else:
     elif sel == "🎓 Admissions": render_registrar(df_reg, df_sf10, sh_reg, sy)
     elif sel == "💰 Finance": render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy)
     elif sel == "🛡️ User Admin": render_admin(df_users, sh_fin)
+
