@@ -7,10 +7,14 @@ import base64
 from datetime import datetime
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="SchoolEnroll OS", page_icon="🎓", layout="wide")
+st.set_page_config(
+    page_title="ALSDI MIS", 
+    page_icon="🏫", 
+    layout="wide"
+)
 
 # ==========================================
-#⚙️ CONFIGURATION
+# ⚙️ CONFIGURATION
 # ==========================================
 REGISTRAR_SHEET_NAME = "Registrar 2025-2026" 
 FINANCE_SHEET_NAME = "Finance 2025-2026"
@@ -33,6 +37,8 @@ PAYMENT_METHODS = ["Cash", "GCash", "Bank Transfer", "Check"]
 st.markdown("""
 <style>
     .stApp { background-color: #f8f9fa; }
+    
+    /* Metrics Cards */
     div[data-testid="stMetric"] {
         background-color: #ffffff;
         border: 1px solid #e0e0e0;
@@ -40,9 +46,27 @@ st.markdown("""
         border-radius: 8px;
         box-shadow: 0 2px 5px rgba(0,0,0,0.05);
     }
+    
+    /* Sidebar Styling */
     section[data-testid="stSidebar"] {
         background-color: #ffffff;
         border-right: 1px solid #eaeaea;
+    }
+    
+    /* School Name Styling in Sidebar */
+    .sidebar-school-name {
+        font-size: 14px;
+        font-weight: bold;
+        color: #1e3a8a;
+        text-transform: uppercase;
+        margin-bottom: 0px;
+        line-height: 1.2;
+    }
+    .sidebar-system-name {
+        font-size: 12px;
+        color: #64748b;
+        margin-top: 5px;
+        font-style: italic;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -66,24 +90,23 @@ def load_data():
             
             # 1. Extract and Clean Headers
             raw_headers = data.pop(0) 
-            headers = [h.strip() for h in raw_headers] # Remove extra spaces
+            headers = [h.strip() for h in raw_headers]
             
             # 2. Create DataFrame
             df = pd.DataFrame(data, columns=headers)
             
-            # 3. Remove columns with empty headers (Fixes "Duplicate" error)
+            # 3. Remove columns with empty headers
             df = df.loc[:, [c for c in df.columns if c]]
             
             # 4. Ensure Expected Columns Exist
             if expected_cols:
                 for col in expected_cols:
                     if col not in df.columns:
-                        # Fallback: Check for case-insensitive match
                         match = next((h for h in df.columns if h.lower() == col.lower()), None)
                         if match:
                             df.rename(columns={match: col}, inplace=True)
                         else:
-                            df[col] = "" # Create empty if truly missing
+                            df[col] = "" 
             return df
         except Exception as e:
             return pd.DataFrame(columns=expected_cols if expected_cols else [])
@@ -96,7 +119,7 @@ def load_data():
         try:
             ws_reg = sh_reg.worksheet("Student_Registry")
         except gspread.WorksheetNotFound:
-            st.error("❌ Critical: 'Student_Registry' tab is missing in Registrar DB.")
+            st.error("❌ Critical: 'Student_Registry' tab is missing.")
             st.stop()
             
         cols_reg = ["Student_ID", "LRN", "Last Name", "First Name", "Middle Name", "Grade Level", "Student Type", "Previous School", "PSA Birth Cert", "Report Card / ECCD", "Good Moral", "SF10 Status", "Data Privacy Consent", "Current Status", "School_Year"]
@@ -104,7 +127,6 @@ def load_data():
         
         if not df_reg.empty:
             df_reg['Student_ID'] = df_reg['Student_ID'].astype(str)
-            # Default SY if missing
             if 'School_Year' in df_reg.columns:
                 df_reg['School_Year'] = df_reg['School_Year'].replace("", "2025-2026")
             else:
@@ -114,7 +136,6 @@ def load_data():
         try:
             ws_sf10 = sh_reg.worksheet("SF10_Requests")
         except gspread.WorksheetNotFound:
-            # Only create if it TRULY doesn't exist
             ws_sf10 = sh_reg.add_worksheet("SF10_Requests", 1000, 4)
             ws_sf10.append_row(["Timestamp", "Student_Name", "Student_ID", "Status"])
         
@@ -132,7 +153,6 @@ def load_data():
         try:
             ws_pay = sh_fin.worksheet("Payments_Log")
         except gspread.WorksheetNotFound:
-            # Only create if it TRULY doesn't exist
             ws_pay = sh_fin.add_worksheet("Payments_Log", 1000, 9)
             ws_pay.append_row(["Date", "OR_Number", "Student_ID", "Student_Name", "Amount", "Method", "Notes", "Type", "School_Year"])
         
@@ -152,14 +172,12 @@ def load_data():
             ws_users = sh_fin.add_worksheet("User_Accounts", 100, 3)
             ws_users.append_row(["Username", "Password", "Role"])
         
-        # Check users safely
         all_users = ws_users.get_all_values()
         if len(all_users) <= 1: 
              seeds = [["alsdiregistrar", "alsdi2006", "Registrar"], ["alsdifinance", "alsdi2006", "Finance"], ["alsdiadmin", "alsdi2006", "Admin"]]
              for s in seeds: ws_users.append_row(s)
              all_users = ws_users.get_all_values()
         
-        # Process Users DF
         headers = all_users.pop(0)
         df_users = pd.DataFrame(all_users, columns=headers)
 
@@ -178,22 +196,40 @@ def get_financials(sid, grade, df_pay, sy):
         paid = df_pay[mask]['Amount'].sum()
     return total_fee, paid, total_fee - paid
 
-# --- PDF GENERATOR ---
+# --- PDF GENERATOR (UPDATED) ---
 def generate_soa(student, total, paid, balance, history_df, sy):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
+    
+    # 1. Header
+    pdf.set_font("Arial", 'B', 14) 
     pdf.cell(0, 10, "ABUNDANT LIFE SCHOOL OF DISCOVERY, INC.", 0, 1, 'C')
+    pdf.set_font("Arial", '', 10)
+    pdf.cell(0, 5, "Management Information System", 0, 1, 'C')
+    pdf.ln(5)
+    
+    # 2. Title Line
     pdf.set_font("Arial", 'I', 11)
     pdf.cell(0, 10, f"STATEMENT OF ACCOUNT (S.Y. {sy})", 0, 1, 'C')
-    pdf.line(10, 30, 200, 30)
+    pdf.line(10, 35, 200, 35)
     pdf.ln(10)
 
+    # 3. Student Details (Left) & Grade (Right)
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(30, 8, "Student:", 0); pdf.set_font("Arial", '', 10); pdf.cell(100, 8, f"{student['Last Name']}, {student['First Name']}", 0)
-    pdf.set_font("Arial", 'B', 10); pdf.cell(20, 8, "Grade:", 0); pdf.set_font("Arial", '', 10); pdf.cell(30, 8, student['Grade Level'], 0, 1)
+    pdf.set_font("Arial", 'B', 10); pdf.cell(20, 8, "Grade:", 0); pdf.set_font("Arial", '', 10); pdf.cell(30, 8, str(student['Grade Level']), 0, 1)
+    
+    # 4. Date Generated (Right, below Grade)
+    gen_date = datetime.now().strftime("%B %d, %Y")
+    pdf.cell(130, 8, "", 0) # Spacer to push to right
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(20, 8, "Date:", 0)
+    pdf.set_font("Arial", '', 10)
+    pdf.cell(30, 8, gen_date, 0, 1)
+    
     pdf.ln(5)
 
+    # 5. Financial Summary Table
     pdf.set_fill_color(245, 245, 245); pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 8, "FINANCIAL SUMMARY", 1, 1, 'L', fill=True)
     pdf.set_font("Arial", '', 10)
@@ -201,6 +237,11 @@ def generate_soa(student, total, paid, balance, history_df, sy):
     pdf.cell(140, 8, "Less: Total Payments", 1); pdf.cell(50, 8, f"({paid:,.2f})", 1, 1, 'R')
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(140, 8, "REMAINING BALANCE", 1); pdf.cell(50, 8, f"{balance:,.2f}", 1, 1, 'R')
+    
+    # 6. Footer Note (As Requested)
+    pdf.ln(20) # Add space at bottom
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(0, 10, "For any queries regarding this statement, please see the Accounting Officer", 0, 1, 'C')
     
     return pdf.output(dest='S').encode('latin-1')
 
@@ -247,7 +288,6 @@ def render_registrar(df_reg, df_sf10, sh_reg, sy):
     
     t1, t2, t3 = st.tabs(["📝 Enroll Student", "📂 Master List", "📜 SF10 Requests"])
     
-    # TAB 1: ENROLL
     with t1:
         with st.form("enroll_form"):
             c1, c2 = st.columns(2)
@@ -270,15 +310,11 @@ def render_registrar(df_reg, df_sf10, sh_reg, sy):
                     st.toast(f"Student Enrolled: {nid}", icon="✅")
                     time.sleep(1)
                     st.rerun()
-                    
-    # TAB 2: MASTER LIST
     with t2:
         st.dataframe(sy_reg, use_container_width=True)
 
-    # TAB 3: SF10 REQUESTS (UPDATED FOR WALK-INS)
     with t3:
         col_req, col_list = st.columns([1, 2])
-        
         with col_req:
             st.markdown("#### Create Request")
             req_type = st.radio("Request Type", ["Current Student", "Walk-in / Alumni"], horizontal=True)
@@ -287,7 +323,6 @@ def render_registrar(df_reg, df_sf10, sh_reg, sy):
             id_to_log = "WALK-IN"
             
             if req_type == "Current Student":
-                # SEARCH DB
                 all_students_list = df_reg.apply(lambda x: f"{x['Last Name']}, {x['First Name']} ({x['Student_ID']})", axis=1).tolist()
                 search_sf10 = st.selectbox("Select Student", all_students_list, index=None)
                 if search_sf10:
@@ -296,7 +331,6 @@ def render_registrar(df_reg, df_sf10, sh_reg, sy):
                     name_to_log = f"{stu_row['Last Name']}, {stu_row['First Name']}"
                     id_to_log = sid
             else:
-                # MANUAL INPUT
                 st.info("Input details for student not in database.")
                 m_last = st.text_input("Last Name (Manual)")
                 m_first = st.text_input("First Name (Manual)")
@@ -322,7 +356,6 @@ def render_registrar(df_reg, df_sf10, sh_reg, sy):
             else:
                 st.info("No requests found.")
 
-
 def render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy):
     st.subheader(f"💰 Finance Portal ({sy})")
     
@@ -331,7 +364,6 @@ def render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy):
     
     t_cashier, t_docs, t_ledger = st.tabs(["💸 Cashiering", "📜 Document Fees (SF10)", "📒 Transaction Log"])
     
-    # TAB 1: CASHIERING
     with t_cashier:
         c1, c2 = st.columns([1, 2])
         with c1:
@@ -365,14 +397,12 @@ def render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy):
                     href = f'<a href="data:application/octet-stream;base64,{b64}" download="SOA_{sid}.pdf">📥 Download PDF</a>'
                     st.markdown(href, unsafe_allow_html=True)
 
-    # TAB 2: DOCUMENT FEES
     with t_docs:
         st.markdown("#### Pending Document Requests")
         pending_sf10 = df_sf10[df_sf10['Status'] == 'Pending Payment'] if not df_sf10.empty else pd.DataFrame()
         
         if not pending_sf10.empty:
             for i, row in pending_sf10.iterrows():
-                # Card-like expander
                 label = f"📄 {row['Student_Name']} (ID: {row['Student_ID']})"
                 with st.expander(label):
                     st.caption(f"Requested: {row['Timestamp']}")
@@ -381,15 +411,10 @@ def render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy):
                         doc_fee = c_a.number_input("SF10 Fee", value=150.0)
                         or_doc = c_b.text_input("OR Number", key=f"or_{i}")
                         if st.form_submit_button("Process Payment & Release"):
-                            # Log Payment
                             sh_fin.worksheet("Payments_Log").append_row([
                                 CURRENT_DATE, or_doc, str(row['Student_ID']), row['Student_Name'], 
                                 doc_fee, "Cash", "SF10 Request Fee", "Document Fee", sy
                             ])
-                            # Update SF10 Log to 'Paid'
-                            # Since we can't easily edit rows without Row IDs in GSpread simple mode,
-                            # we append a new "Update" row to the SF10 sheet to signify completion.
-                            # In a real DB, you'd update line item. Here, we add a "Released" entry.
                             sh_reg.worksheet("SF10_Requests").append_row([
                                 datetime.now().strftime("%Y-%m-%d"), row['Student_Name'], str(row['Student_ID']), "PAID / RELEASED"
                             ])
@@ -403,7 +428,6 @@ def render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy):
         st.markdown("#### Request History")
         st.dataframe(df_sf10, use_container_width=True)
 
-    # TAB 3: LEDGER
     with t_ledger:
         st.dataframe(sy_pay, use_container_width=True)
 
@@ -437,7 +461,13 @@ except Exception as e:
 if not st.session_state.logged_in:
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
-        st.markdown("<br><h2 style='text-align:center;'>🔐 SchoolEnroll OS</h2>", unsafe_allow_html=True)
+        st.markdown("""
+            <div style='text-align: center; margin-bottom: 30px;'>
+                <h2 style='color: #1e3a8a; margin-bottom: 5px;'>ABUNDANT LIFE SCHOOL OF DISCOVERY, INC.</h2>
+                <h5 style='color: #64748b;'>Management Information System</h5>
+            </div>
+        """, unsafe_allow_html=True)
+        
         with st.form("login"):
             user = st.text_input("Username")
             pwd = st.text_input("Password", type="password")
@@ -462,8 +492,14 @@ else:
     sy = st.session_state.sy
     
     with st.sidebar:
-        st.title("SchoolEnroll")
-        st.caption(f"Role: {role}")
+        st.markdown("""
+            <div style='text-align: center; padding-bottom: 20px;'>
+                <div class='sidebar-school-name'>ABUNDANT LIFE SCHOOL<br>OF DISCOVERY, INC.</div>
+                <div class='sidebar-system-name'>Management Information System</div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        st.caption(f"User: {role}")
         new_sy = st.selectbox("SY", SCHOOL_YEARS, index=SCHOOL_YEARS.index(sy))
         if new_sy != sy: st.session_state.sy = new_sy; st.rerun()
         st.divider()
@@ -481,4 +517,3 @@ else:
     elif sel == "🎓 Admissions": render_registrar(df_reg, df_sf10, sh_reg, sy)
     elif sel == "💰 Finance": render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy)
     elif sel == "🛡️ User Admin": render_admin(df_users, sh_fin)
-
