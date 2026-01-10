@@ -69,7 +69,7 @@ def get_spreadsheets():
     except Exception as e:
         return None, None, e
 
-@st.cache_data(ttl=10)
+@st.cache_data(ttl=60) # Increased TTL to 60s to prevent API Quota crashes
 def fetch_sheet_data(_ws):
     try:
         return _ws.get_all_values()
@@ -90,10 +90,20 @@ def load_data():
             if col not in df.columns: df[col] = ""
         return df[expected_cols]
 
-    df_reg = safe_read(sh_reg.worksheet("Student_Registry"), ["Student_ID", "LRN", "Last Name", "First Name", "Middle Name", "Grade Level", "Student Type", "Previous School", "PSA Birth Cert", "Report Card / ECCD", "Good Moral", "SF10 Status", "Data Privacy Consent", "Current Status", "School_Year"])
-    df_sf10 = safe_read(sh_reg.worksheet("SF10_Requests"), ["Timestamp", "Student_Name", "Student_ID", "Status"])
-    df_pay = safe_read(sh_fin.worksheet("Payments_Log"), ["Date", "OR_Number", "Student_ID", "Student_Name", "Amount", "Method", "Notes", "Type", "School_Year"])
-    df_users = safe_read(sh_fin.worksheet("User_Accounts"), ["Username", "Password", "Role"])
+    # Load Worksheets
+    try:
+        ws_reg = sh_reg.worksheet("Student_Registry")
+        ws_sf10 = sh_reg.worksheet("SF10_Requests")
+        ws_pay = sh_fin.worksheet("Payments_Log")
+        ws_users = sh_fin.worksheet("User_Accounts")
+    except Exception as e:
+        st.error(f"❌ Missing Tabs in Google Sheets: {e}")
+        st.stop()
+
+    df_reg = safe_read(ws_reg, ["Student_ID", "LRN", "Last Name", "First Name", "Middle Name", "Grade Level", "Student Type", "Previous School", "PSA Birth Cert", "Report Card / ECCD", "Good Moral", "SF10 Status", "Data Privacy Consent", "Current Status", "School_Year"])
+    df_sf10 = safe_read(ws_sf10, ["Timestamp", "Student_Name", "Student_ID", "Status"])
+    df_pay = safe_read(ws_pay, ["Date", "OR_Number", "Student_ID", "Student_Name", "Amount", "Method", "Notes", "Type", "School_Year"])
+    df_users = safe_read(ws_users, ["Username", "Password", "Role"])
 
     df_pay["Amount"] = pd.to_numeric(df_pay["Amount"], errors="coerce").fillna(0.0)
     df_reg["Student_ID"] = df_reg["Student_ID"].astype(str)
@@ -150,7 +160,12 @@ def render_dashboard(df_reg, df_pay, sy):
     expected = sum([compute_total_fee(g) for g in sy_reg["Grade Level"]])
     receivables = expected - sy_pay['Amount'].sum()
     c3.metric("Receivables", f"₱{receivables:,.0f}")
-    c4.metric("Registrar Requests", len(sy_reg[sy_reg["SF10 Status"] == "Requested"]))
+    
+    # Check if column exists to avoid error
+    req_count = 0
+    if "SF10 Status" in sy_reg.columns:
+        req_count = len(sy_reg[sy_reg["SF10 Status"] == "Requested"])
+    c4.metric("Registrar Requests", req_count)
 
     st.divider()
     col_a, col_b = st.columns([2, 1])
@@ -160,7 +175,8 @@ def render_dashboard(df_reg, df_pay, sy):
             st.bar_chart(sy_reg["Grade Level"].value_counts())
     with col_b:
         st.subheader("Recent Payments")
-        st.dataframe(sy_pay[["Date", "Student_Name", "Amount"]].tail(5), hide_index=True)
+        if not sy_pay.empty:
+            st.dataframe(sy_pay[["Date", "Student_Name", "Amount"]].tail(5), hide_index=True)
 
 # ==========================================
 # 🎓 MODULE: REGISTRAR (VIEW / EDIT / ADD)
@@ -175,27 +191,34 @@ def render_registrar(df_reg, df_sf10, sh_reg, sy):
         search = c1.text_input("🔍 Search Student Name")
         view_df = df_reg[df_reg["School_Year"] == sy]
         if search:
-            view_df = view_df[view_df["Last Name"].str.contains(search, case=False) | view_df["First Name"].str.contains(search, case=False)]
+            view_df = view_df[view_df["Last Name"].str.contains(search, case=False, na=False) | view_df["First Name"].str.contains(search, case=False, na=False)]
         
         st.dataframe(view_df, use_container_width=True, hide_index=True)
         
         st.divider()
         st.markdown("### ✏️ Edit Student Record")
-        selected_sid = st.selectbox("Select ID to Update", [""] + view_df["Student_ID"].tolist())
+        # Ensure we filter list correctly
+        valid_ids = view_df["Student_ID"].unique().tolist()
+        selected_sid = st.selectbox("Select ID to Update", [""] + valid_ids)
         
         if selected_sid:
+            # Get the exact row index from the ORIGINAL dataframe to match Google Sheets row number
             idx = df_reg[df_reg["Student_ID"] == selected_sid].index[0]
             stu = df_reg.iloc[idx]
+            
             with st.form("edit_student"):
                 ca, cb = st.columns(2)
                 u_ln = ca.text_input("Last Name", value=stu["Last Name"])
                 u_fn = cb.text_input("First Name", value=stu["First Name"])
-                u_gr = ca.selectbox("Grade", GRADE_LEVELS, index=GRADE_LEVELS.index(stu["Grade Level"]))
-                u_st = cb.selectbox("Status", ["Pending", "Enrolled", "Withdrawn"], index=0)
+                u_gr = ca.selectbox("Grade", GRADE_LEVELS, index=GRADE_LEVELS.index(stu["Grade Level"]) if stu["Grade Level"] in GRADE_LEVELS else 0)
+                
+                status_opts = ["Pending", "Enrolled", "Withdrawn"]
+                curr_stat = stu["Current Status"] if stu["Current Status"] in status_opts else "Pending"
+                u_st = cb.selectbox("Status", status_opts, index=status_opts.index(curr_stat))
                 
                 if st.form_submit_button("Save Changes"):
                     ws = sh_reg.worksheet("Student_Registry")
-                    row = int(idx) + 2
+                    row = int(idx) + 2 # +2 because 1 for header, 1 for 0-index
                     ws.update(f"C{row}:D{row}", [[u_ln, u_fn]])
                     ws.update_cell(row, 6, u_gr)
                     ws.update_cell(row, 14, u_st)
@@ -217,7 +240,7 @@ def render_registrar(df_reg, df_sf10, sh_reg, sy):
                 st.success(f"Enrolled {nid}"); st.cache_data.clear(); time.sleep(1); st.rerun()
 
     with t_sf10:
-        render_sf10_logic(df_reg, df_sf10, sh_reg)
+        st.dataframe(df_sf10, use_container_width=True)
 
 # ==========================================
 # 💰 MODULE: FINANCE
@@ -271,6 +294,7 @@ def generate_soa_fixed(student, total, paid, balance, sy):
     pdf.set_font("Arial", "I", 11)
     pdf.cell(0, 10, f"STATEMENT OF ACCOUNT (S.Y. {sy})", 0, 1, "C")
     
+    # Safe Line Drawing (Below text)
     y = pdf.get_y() + 2
     pdf.line(10, y, 200, y)
     pdf.ln(10)
@@ -290,34 +314,16 @@ def generate_soa_fixed(student, total, paid, balance, sy):
     pdf.set_font("Arial", "B", 11)
     pdf.cell(140, 10, "REMAINING BALANCE", 1); pdf.cell(50, 10, f"PHP {balance:,.2f}", 1, 1, 'R')
     
+    # Footer Note
+    pdf.ln(20)
+    pdf.set_font("Arial", "B", 10)
+    pdf.cell(0, 10, "For any queries regarding this statement, please see the Accounting Officer", 0, 1, "C")
+    
     return pdf.output(dest="S").encode("latin-1")
 
-def render_sf10_logic(df_reg, df_sf10, sh_reg):
-    st.dataframe(df_sf10, use_container_width=True)
-
 # ==========================================
-# 🚀 AUTH & ROUTING
+# 🚀 AUTH & ENTRY POINT
 # ==========================================
-
-def render_login(df_users):
-    c1, c2, c3 = st.columns([1, 2, 1])
-    with c2:
-        st.markdown("<h2 style='text-align:center;'>ALSDI MIS LOGIN</h2>", unsafe_allow_html=True)
-        with st.form("login"):
-            u = st.text_input("Username")
-            p = st.text_input("Password", type="password")
-            sy = st.selectbox("School Year", SCHOOL_YEARS)
-            if st.form_submit_button("Login", use_container_width=True):
-                # 1. Master Admin Check
-                if u == st.secrets["auth"]["username"] and p == st.secrets["auth"]["password"]:
-                    st.session_state.logged_in = True; st.session_state.role = "Admin"; st.session_state.sy = sy; st.rerun()
-                # 2. Database User Check
-                elif not df_users.empty:
-                    row = df_users[df_users["Username"] == u]
-                    if not row.empty and str(row.iloc[0]["Password"]) == p:
-                        st.session_state.logged_in = True; st.session_state.role = row.iloc[0]["Role"]; st.session_state.sy = sy; st.rerun()
-                    else: st.error("Invalid Credentials")
-                else: st.error("No users in DB")
 
 def main():
     if "logged_in" not in st.session_state: st.session_state.logged_in = False
@@ -328,7 +334,24 @@ def main():
         st.error(f"System Error: {e}"); return
 
     if not st.session_state.logged_in:
-        render_login(df_users)
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
+            st.markdown("<h2 style='text-align:center;'>ALSDI MIS LOGIN</h2>", unsafe_allow_html=True)
+            with st.form("login"):
+                u = st.text_input("Username")
+                p = st.text_input("Password", type="password")
+                sy = st.selectbox("School Year", SCHOOL_YEARS)
+                if st.form_submit_button("Login", use_container_width=True):
+                    # Check Secrets First
+                    if u == st.secrets["auth"]["username"] and p == st.secrets["auth"]["password"]:
+                        st.session_state.logged_in = True; st.session_state.role = "Admin"; st.session_state.sy = sy; st.rerun()
+                    # Check DB Users Second
+                    elif not df_users.empty:
+                        row = df_users[df_users["Username"] == u]
+                        if not row.empty and str(row.iloc[0]["Password"]) == p:
+                            st.session_state.logged_in = True; st.session_state.role = row.iloc[0]["Role"]; st.session_state.sy = sy; st.rerun()
+                        else: st.error("Invalid Credentials")
+                    else: st.error("No users in DB")
     else:
         with st.sidebar:
             st.markdown(f"<div class='sidebar-school-name'>ALSDI MIS<br><small>{st.session_state.sy}</small></div>", unsafe_allow_html=True)
