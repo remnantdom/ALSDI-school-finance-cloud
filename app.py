@@ -387,7 +387,7 @@ def render_registrar(df_reg, df_sf10, sh_reg, sy):
 
     t1, t2, t3 = st.tabs(["📝 Enroll Student", "📂 Master List", "📜 SF10 Requests"])
 
-    with t1:
+        with t1:
         with st.form("enroll_form"):
             c1, c2 = st.columns(2)
             last = c1.text_input("Last Name")
@@ -404,14 +404,15 @@ def render_registrar(df_reg, df_sf10, sh_reg, sy):
                     nid = f"{sy.split('-')[0]}-{len(sy_reg)+1:04d}"
                     sh_reg.worksheet("Student_Registry").append_row([
                         nid, lrn, last, first, "", grade, stype, prev,
-                        "To Follow", "To Follow", "To Follow", "To Request", "FALSE", "Pending", sy
+                        "To Follow", "To Follow", "To Follow",
+                        "To Request", "FALSE", "Pending", sy
                     ])
                     st.toast(f"Student Enrolled: {nid}", icon="✅")
                     st.cache_data.clear()
                     time.sleep(1)
                     st.rerun()
 
-  with t2:
+    with t2:
         st.markdown("### ✏️ Edit Student Records")
 
         edited_df = st.data_editor(
@@ -423,18 +424,14 @@ def render_registrar(df_reg, df_sf10, sh_reg, sy):
 
         if st.button("💾 Save Changes", type="primary"):
             ws = sh_reg.worksheet("Student_Registry")
-
             ws.batch_clear(["A2:Z"])
-
             ws.append_rows(
                 edited_df.astype(str).values.tolist(),
                 value_input_option="USER_ENTERED"
             )
-
             st.success("Student records updated successfully.")
             st.cache_data.clear()
             st.rerun()
-
 
     with t3:
         col_req, col_list = st.columns([1, 2])
@@ -688,6 +685,7 @@ else:
         render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy)
     elif sel == "🛡️ User Admin":
         render_admin(df_users, sh_fin)
+
 
 
 
