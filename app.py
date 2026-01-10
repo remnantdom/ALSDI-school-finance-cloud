@@ -411,7 +411,7 @@ def render_registrar(df_reg, df_sf10, sh_reg, sy):
                     time.sleep(1)
                     st.rerun()
 
-    with t2:
+   with t2:
     st.markdown("### ✏️ Edit Student Records")
 
     edited_df = st.data_editor(
@@ -424,10 +424,8 @@ def render_registrar(df_reg, df_sf10, sh_reg, sy):
     if st.button("💾 Save Changes", type="primary"):
         ws = sh_reg.worksheet("Student_Registry")
 
-        # Clear old data except header
         ws.batch_clear(["A2:Z"])
 
-        # Write updated records
         ws.append_rows(
             edited_df.astype(str).values.tolist(),
             value_input_option="USER_ENTERED"
@@ -436,7 +434,6 @@ def render_registrar(df_reg, df_sf10, sh_reg, sy):
         st.success("Student records updated successfully.")
         st.cache_data.clear()
         st.rerun()
-
 
     with t3:
         col_req, col_list = st.columns([1, 2])
@@ -690,4 +687,5 @@ else:
         render_finance(df_reg, df_pay, df_sf10, sh_fin, sh_reg, sy)
     elif sel == "🛡️ User Admin":
         render_admin(df_users, sh_fin)
+
 
